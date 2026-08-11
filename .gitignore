@@ -1,0 +1,11 @@
+# Zugangsdaten / Konfiguration
+config.php
+db.php
+ai_config.php
+
+# Datenbank-Dump
+database.sql
+
+# Umgebungsdateien
+.env
+.env.*

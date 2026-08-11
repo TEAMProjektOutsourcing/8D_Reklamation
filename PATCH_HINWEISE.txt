@@ -1,0 +1,13 @@
+Manueller Patch:
+
+claim_view.php:
+- Den kompletten Block "KI-Light Analyse & Maßnahmenwirksamkeit" entfernen.
+- Den Block "Mögliche Wiederholfehler" als "Ähnliche Berichte / mögliche Wiederholfehler" behalten.
+
+auswertungen.php:
+- Query $qmAnalysisClaimRows ergänzen.
+- Neue Karte "KI-Light Analyse & Maßnahmenwirksamkeit" einfügen.
+- Dort Analyse-Button und QM-Feedback-Buttons ausgeben.
+
+CSS:
+- kleine Button-Rundungen für die Auswertung ergänzen.

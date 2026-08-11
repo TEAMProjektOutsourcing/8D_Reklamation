@@ -1,0 +1,37 @@
+8D-Tool: Mehrere Standorte aktivieren
+====================================
+
+1) ZIP hochladen und vorhandene Dateien überschreiben.
+2) Als Admin einloggen.
+3) Im Browser aufrufen:
+   run_location_migration.php
+4) Die Migration legt an:
+   - standorte
+   - user_standorte
+   - claims.standort_id
+   - claims.source_module / source_number / source_url
+   - Demo-Standorte Wunstorf und Hannover
+5) Danach im Header den Standort auswählen:
+   - WUN · Wunstorf
+   - HAN · Hannover
+   - Alle Standorte (nur Admin)
+6) Unter Benutzer können Benutzer den Standorten zugeordnet werden.
+7) Unter Standorte können weitere Standorte angelegt werden.
+
+Wichtig:
+- Bestehende Reklamationen werden automatisch Wunstorf zugeordnet.
+- Nicht-Admins sehen nur Reklamationen/Maßnahmen ihrer zugeordneten Standorte.
+- Neue Reklamationsnummern enthalten das Standort-Kürzel, z. B. WUN-8D-2026-0007.
+
+Nach erfolgreichem Test kannst du run_location_migration.php löschen.
+
+
+Hinweis: In dieser Version wird der Foreign Key claims -> standorte bewusst nicht erzwungen, weil IONOS/MariaDB bei bestehenden Tabellen sonst errno 150 werfen kann. Die Funktion läuft über claims.standort_id und Index.
+
+Update: Standortverwaltung
+--------------------------
+- Der Standort-Switcher in der Navigation ist nur noch für Admins sichtbar.
+- Normale Benutzer bleiben automatisch auf ihrem zugewiesenen/default Standort.
+- Standorte können im Adminbereich bearbeitet, archiviert, reaktiviert oder gelöscht werden.
+- Löschen ist nur möglich, wenn keine Reklamationen mit dem Standort verknüpft sind.
+- Archivieren setzt den Standort auf inaktiv. Bestehende Reklamationen bleiben erhalten.

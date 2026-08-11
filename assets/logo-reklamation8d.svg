@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 92" role="img" aria-labelledby="title desc">
+  <title id="title">Reklamation8D</title>
+  <desc id="desc">Logo für Reklamation8D Qualitätsmanagement, optimiert für dunkle Navigation.</desc>
+
+  <defs>
+    <linearGradient id="cyanBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="55%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0" y1="16" x2="0" y2="78" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon: clean 8D process circle -->
+  <g transform="translate(10 8)">
+    <circle cx="38" cy="38" r="31" fill="none" stroke="#123456" stroke-width="7" opacity=".95"/>
+    <path d="M38 7 A31 31 0 0 1 69 38" fill="none" stroke="url(#cyanBlue)" stroke-width="7" stroke-linecap="round"/>
+    <path d="M69 38 A31 31 0 0 1 38 69" fill="none" stroke="#0EA5E9" stroke-width="7" stroke-linecap="round"/>
+    <path d="M38 69 A31 31 0 0 1 7 38" fill="none" stroke="#22D3EE" stroke-width="7" stroke-linecap="round"/>
+    <path d="M7 38 A31 31 0 0 1 38 7" fill="none" stroke="#2563EB" stroke-width="7" stroke-linecap="round"/>
+    <path d="M65 22 L76 24 L69 33 Z" fill="#22D3EE"/>
+
+    <path d="M38 20 L61 29 V48 C61 63 52 73 38 80 C24 73 15 63 15 48 V29 Z"
+          fill="url(#shield)" stroke="#FFFFFF" stroke-width="3.3" stroke-linejoin="round"/>
+    <path d="M25 48 L35 58 L54 36"
+          fill="none" stroke="#2DD4BF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <g transform="translate(94 25)">
+    <text x="0" y="28"
+          font-family="Arial, Helvetica, sans-serif"
+          font-size="29"
+          font-weight="800"
+          letter-spacing="-0.7"
+          fill="#FFFFFF">Reklamation</text>
+    <text x="165" y="28"
+          font-family="Arial, Helvetica, sans-serif"
+          font-size="31"
+          font-weight="900"
+          letter-spacing="-0.6"
+          fill="#22D3EE">8D</text>
+    <text x="2" y="52"
+          font-family="Arial, Helvetica, sans-serif"
+          font-size="11.5"
+          font-weight="700"
+          letter-spacing="3.8"
+          fill="#67E8F9">QUALITÄTSMANAGEMENT</text>
+  </g>
+</svg>

@@ -1,0 +1,42 @@
+Auswertung + Fotodokumentation
+================================
+
+1) Dateien hochladen und bestehende Dateien überschreiben.
+
+2) Einmal als Admin diese Datei im Browser ausführen:
+   run_photo_analytics_migration.php
+
+   Dadurch werden in claim_files diese Spalten ergänzt:
+   - step_key
+   - category
+   - caption
+
+3) Danach kann die Migration gelöscht werden:
+   run_photo_analytics_migration.php
+
+Neue Funktionen
+---------------
+
+Auswertung:
+- Neuer Menüpunkt "Auswertung"
+- KPIs zu Reklamationen, Status, Prioritäten, Standorten
+- Maßnahmen-Ampel grün/gelb/rot
+- Top Partner/Kunden/Lieferanten
+- Top Artikelnummern
+- Reklamationen nach Monat
+- Rote Maßnahmen
+- Fotodoku-Auswertung nach Bildern/Dokumenten, D-Schritt und Kategorie
+
+Fotodokumentation:
+- Upload mit D-Schritt D1-D8
+- Upload mit Kategorie:
+  Problemfoto, Sofortmaßnahme, Ursachenanalyse, Korrekturmaßnahme, Nachweis/Umsetzung, Sonstiges
+- Beschreibung je Foto/Datei
+- Bildvorschau direkt in der Reklamation
+- Sonstige Dateien getrennt von Fotos
+- Bericht/PDF zeigt Bilder, D-Schritt, Kategorie und Beschreibung mit an
+
+Hinweis
+-------
+Wenn die Migration noch nicht gelaufen ist, funktionieren alte Uploads weiterhin.
+Die neuen Felder erscheinen erst nach der Migration.
