@@ -1,7 +1,5 @@
 <?php
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
+require_once __DIR__ . '/security_bootstrap.php';
 
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/qm_helper.php';
@@ -273,8 +271,7 @@ function metric_number(array $row, string $key): int
 function analytics_info(string $text): string
 {
     return '<span class="analytics-info-wrap no-print">'
-        . '<button type="button" class="analytics-info-icon" aria-label="Info anzeigen" title="Info">i</button>'
-        . '<span class="analytics-info-text" role="tooltip">' . e($text) . '</span>'
+        . '<button type="button" class="analytics-info-icon" aria-label="Erklärung anzeigen" aria-expanded="false" data-info="' . e($text) . '">i</button>'
         . '</span>';
 }
 
@@ -320,23 +317,40 @@ try {
 
 $qmAiWarningRows = [];
 $qmAiWarningCounts = [];
+$qmAiWarningDetailRows = [];
+$qmAiWarningDetailsByStatus = [];
 
 try {
     if (qm_ai_tables_enabled()) {
-        $qmAiWarningCounts = analytics_fetch_all("SELECT effectiveness_warning, COUNT(*) AS count_value
-            FROM (
-                SELECT a.*
-                FROM claim_ai_analysis a
-                INNER JOIN (
-                    SELECT claim_id, MAX(id) AS max_id
-                    FROM claim_ai_analysis
-                    GROUP BY claim_id
-                ) latest ON latest.max_id = a.id
-            ) x
-            GROUP BY effectiveness_warning
-            ORDER BY count_value DESC", []);
+        // Zählung und Drill-down verwenden bewusst dieselbe Datenbasis:
+        // jeweils nur die aktuellste KI-Light Analyse pro Reklamation und
+        // nur Reklamationen im aktuell erlaubten Standortbereich.
+        $qmAiWarningCounts = analytics_fetch_all("SELECT
+                a.effectiveness_warning,
+                COUNT(*) AS count_value
+            FROM claim_ai_analysis a
+            JOIN claims c ON c.id = a.claim_id
+            INNER JOIN (
+                SELECT claim_id, MAX(id) AS max_id
+                FROM claim_ai_analysis
+                GROUP BY claim_id
+            ) latest ON latest.max_id = a.id" . $where . "
+            GROUP BY a.effectiveness_warning
+            ORDER BY
+              CASE a.effectiveness_warning WHEN 'red' THEN 1 WHEN 'yellow' THEN 2 ELSE 3 END,
+              count_value DESC", $locationParams);
 
-        $qmAiWarningRows = analytics_fetch_all("SELECT a.*, c.claim_number, c.short_description, c.claim_date, c.status
+        $qmAiWarningDetailRows = analytics_fetch_all("SELECT
+                a.id AS analysis_id,
+                a.claim_id,
+                a.effectiveness_warning,
+                a.detected_error_pattern,
+                a.ai_summary,
+                a.created_at AS analysis_at,
+                c.claim_number,
+                c.short_description,
+                c.claim_date,
+                c.status
             FROM claim_ai_analysis a
             JOIN claims c ON c.id = a.claim_id
             INNER JOIN (
@@ -346,8 +360,16 @@ try {
             ) latest ON latest.max_id = a.id" . $where . "
             ORDER BY
               CASE a.effectiveness_warning WHEN 'red' THEN 1 WHEN 'yellow' THEN 2 ELSE 3 END,
-              a.created_at DESC
-            LIMIT 10", $locationParams);
+              a.created_at DESC,
+              c.id DESC", $locationParams);
+
+        foreach ($qmAiWarningDetailRows as $detailRow) {
+            $detailKey = (string)($detailRow['effectiveness_warning'] ?? '');
+            $qmAiWarningDetailsByStatus[$detailKey][] = $detailRow;
+        }
+
+        // Kompakte Historienliste links bleibt weiterhin auf 10 Einträge begrenzt.
+        $qmAiWarningRows = array_slice($qmAiWarningDetailRows, 0, 10);
     }
 } catch (Throwable $e) {
     error_log('QM KI-Light Auswertung fehlgeschlagen: ' . $e->getMessage());
@@ -356,19 +378,37 @@ try {
 
 $qmFeedbackRows = [];
 $qmFeedbackCounts = [];
+$qmFeedbackDetailRows = [];
+$qmFeedbackDetailsByValue = [];
 
 try {
     if (qm_feedback_enabled()) {
-        $qmFeedbackCounts = analytics_fetch_all("SELECT feedback_value, COUNT(*) AS count_value
-            FROM claim_ai_feedback
-            GROUP BY feedback_value
-            ORDER BY count_value DESC", []);
-
-        $qmFeedbackRows = analytics_fetch_all("SELECT f.*, c.claim_number, c.short_description, c.claim_date, c.status
+        // Auch hier verwenden Zählung und Drill-down dieselbe Standortbasis.
+        $qmFeedbackCounts = analytics_fetch_all("SELECT
+                f.feedback_value,
+                COUNT(*) AS count_value
             FROM claim_ai_feedback f
             JOIN claims c ON c.id = f.claim_id" . $where . "
-            ORDER BY f.created_at DESC, f.id DESC
-            LIMIT 12", $locationParams);
+            GROUP BY f.feedback_value
+            ORDER BY count_value DESC", $locationParams);
+
+        $qmFeedbackDetailRows = analytics_fetch_all("SELECT
+                f.*,
+                c.claim_number,
+                c.short_description,
+                c.claim_date,
+                c.status
+            FROM claim_ai_feedback f
+            JOIN claims c ON c.id = f.claim_id" . $where . "
+            ORDER BY f.created_at DESC, f.id DESC", $locationParams);
+
+        foreach ($qmFeedbackDetailRows as $detailRow) {
+            $detailKey = (string)($detailRow['feedback_value'] ?? '');
+            $qmFeedbackDetailsByValue[$detailKey][] = $detailRow;
+        }
+
+        // Die bestehende Feedback-Historie bleibt bewusst kompakt.
+        $qmFeedbackRows = array_slice($qmFeedbackDetailRows, 0, 12);
     }
 } catch (Throwable $e) {
     error_log('QM Feedback Auswertung fehlgeschlagen: ' . $e->getMessage());
@@ -491,51 +531,121 @@ require __DIR__ . '/header.php';
     font-size: .72rem;
     font-weight: 800;
     line-height: 1;
-    cursor: pointer;
+    cursor: help;
+    transition: transform .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+    transform-origin: center;
 }
 
 .analytics-info-icon:hover,
-.analytics-info-icon:focus {
+.analytics-info-icon:focus-visible,
+.analytics-info-icon.is-active {
     background: #eef6ff;
     border-color: #0d6efd;
+    box-shadow: 0 0 0 4px rgba(13, 110, 253, .10);
+    transform: scale(1.28);
     outline: none;
 }
 
-.analytics-info-text {
-    position: absolute;
-    z-index: 2500;
-    top: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(310px, calc(100vw - 2rem));
-    display: none !important;
-    padding: .7rem .8rem;
-    border-radius: 14px;
+.analytics-info-popover {
+    --arrow-x: 50%;
+    --arrow-y: 50%;
+    position: fixed;
+    z-index: 10000;
+    width: min(390px, calc(100vw - 24px));
+    display: none;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, .30);
+    border-radius: 16px;
     background: #0f172a;
     color: #ffffff;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, .25);
-    font-size: .82rem;
-    font-weight: 500;
-    line-height: 1.35;
+    box-shadow: 0 22px 55px rgba(15, 23, 42, .30);
     text-align: left;
     white-space: normal;
+    pointer-events: auto;
 }
 
-.analytics-info-text::before {
+.analytics-info-popover.is-visible {
+    display: block;
+    animation: analyticsInfoIn .14s ease-out;
+}
+
+.analytics-info-popover::before {
     content: "";
     position: absolute;
-    left: 50%;
-    top: -6px;
-    transform: translateX(-50%);
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-bottom: 6px solid #0f172a;
+    width: 12px;
+    height: 12px;
+    background: #0f172a;
+    transform: rotate(45deg);
 }
 
-.analytics-info-wrap:hover .analytics-info-text,
-.analytics-info-wrap:focus-within .analytics-info-text,
-.analytics-info-wrap.is-open .analytics-info-text {
-    display: block !important;
+.analytics-info-popover[data-placement="right"]::before {
+    left: -6px;
+    top: var(--arrow-y);
+    margin-top: -6px;
+    border-left: 1px solid rgba(148, 163, 184, .30);
+    border-bottom: 1px solid rgba(148, 163, 184, .30);
+}
+
+.analytics-info-popover[data-placement="left"]::before {
+    right: -6px;
+    top: var(--arrow-y);
+    margin-top: -6px;
+    border-right: 1px solid rgba(148, 163, 184, .30);
+    border-top: 1px solid rgba(148, 163, 184, .30);
+}
+
+.analytics-info-popover[data-placement="bottom"]::before {
+    top: -6px;
+    left: var(--arrow-x);
+    margin-left: -6px;
+    border-left: 1px solid rgba(148, 163, 184, .30);
+    border-top: 1px solid rgba(148, 163, 184, .30);
+}
+
+.analytics-info-popover[data-placement="top"]::before {
+    bottom: -6px;
+    left: var(--arrow-x);
+    margin-left: -6px;
+    border-right: 1px solid rgba(148, 163, 184, .30);
+    border-bottom: 1px solid rgba(148, 163, 184, .30);
+}
+
+.analytics-info-popover-head {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .85rem 1rem .7rem;
+    border-bottom: 1px solid rgba(255, 255, 255, .10);
+}
+
+.analytics-info-popover-badge {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #0d6efd;
+    font-size: .82rem;
+    font-weight: 900;
+}
+
+.analytics-info-popover-title {
+    min-width: 0;
+    font-size: .92rem;
+    font-weight: 800;
+    line-height: 1.25;
+    color: #ffffff;
+}
+
+.analytics-info-popover-body {
+    padding: .9rem 1rem 1rem;
+    font-size: .88rem;
+    font-weight: 500;
+    line-height: 1.52;
+    color: #e2e8f0;
 }
 
 .analytics-title-with-info,
@@ -545,55 +655,340 @@ require __DIR__ . '/header.php';
     gap: .1rem;
 }
 
+.analytics-drilldown-row {
+    border-bottom: 1px solid #e9ecef;
+}
+
+.analytics-drilldown-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: .7rem 0;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+}
+
+.analytics-drilldown-toggle:hover,
+.analytics-drilldown-toggle:focus-visible {
+    background: #f8faff;
+    outline: none;
+}
+
+.analytics-drilldown-toggle[aria-expanded="true"] {
+    background: #f4f8ff;
+}
+
+.analytics-drilldown-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-left: .4rem;
+    color: #64748b;
+    transition: transform .18s ease;
+}
+
+.analytics-drilldown-toggle[aria-expanded="true"] .analytics-drilldown-chevron {
+    transform: rotate(180deg);
+}
+
+.analytics-drilldown-panel {
+    background: #f8fafc;
+    border-top: 1px solid #edf2f7;
+    padding: .45rem .65rem .75rem;
+}
+
+.analytics-drilldown-claim {
+    padding: .65rem .3rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.analytics-drilldown-claim:last-child {
+    border-bottom: 0;
+}
+
+.analytics-drilldown-description {
+    color: #64748b;
+    font-size: .82rem;
+    margin-top: .15rem;
+}
+
 .kpi-card {
     border-radius: 16px;
 }
 
+@keyframes analyticsInfoIn {
+    from { opacity: 0; transform: translateY(2px) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @media (max-width: 575.98px) {
-    .analytics-info-wrap {
-        position: static;
-    }
-
-    .analytics-info-text {
-        position: fixed;
-        left: 1rem;
-        right: 1rem;
-        top: auto;
-        bottom: 1rem;
-        transform: none;
-        width: auto;
+    .analytics-info-popover {
+        width: calc(100vw - 24px);
         max-width: none;
-        border-radius: 16px;
+        border-radius: 14px;
     }
 
-    .analytics-info-text::before {
-        display: none;
+    .analytics-info-popover-body {
+        font-size: .9rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .analytics-info-icon {
+        transition: none;
+    }
+
+    .analytics-info-popover.is-visible {
+        animation: none;
     }
 }
 </style>
 
 <script>
-document.addEventListener('click', function (event) {
-    const clickedInfoButton = event.target.closest('.analytics-info-icon');
+(function () {
+    function initAnalyticsInfo() {
+    const VIEWPORT_MARGIN = 12;
+    const GAP = 12;
+    let activeButton = null;
+    let pinnedButton = null;
+    let hideTimer = null;
 
-    document.querySelectorAll('.analytics-info-wrap.is-open').forEach(function (wrap) {
-        if (!clickedInfoButton || !wrap.contains(clickedInfoButton)) {
-            wrap.classList.remove('is-open');
+    const tooltip = document.createElement('div');
+    tooltip.className = 'analytics-info-popover no-print';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.setAttribute('aria-hidden', 'true');
+    tooltip.innerHTML = `
+        <div class="analytics-info-popover-head">
+            <span class="analytics-info-popover-badge" aria-hidden="true">i</span>
+            <div class="analytics-info-popover-title">Kurz erklärt</div>
+        </div>
+        <div class="analytics-info-popover-body"></div>
+    `;
+    document.body.appendChild(tooltip);
+
+    const titleEl = tooltip.querySelector('.analytics-info-popover-title');
+    const bodyEl = tooltip.querySelector('.analytics-info-popover-body');
+
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function getContextTitle(button) {
+        const host = button.closest('.analytics-title-with-info, .analytics-label-with-info, .card-header');
+        if (!host) {
+            return 'Kurz erklärt';
+        }
+
+        const clone = host.cloneNode(true);
+        clone.querySelectorAll('.analytics-info-wrap, .analytics-info-popover').forEach(function (node) {
+            node.remove();
+        });
+
+        const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+        return text || 'Kurz erklärt';
+    }
+
+    function positionTooltip(button) {
+        if (!button || !tooltip.classList.contains('is-visible')) {
+            return;
+        }
+
+        const buttonRect = button.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const tooltipWidth = tooltipRect.width;
+        const tooltipHeight = tooltipRect.height;
+
+        const spaceRight = viewportWidth - buttonRect.right - VIEWPORT_MARGIN;
+        const spaceLeft = buttonRect.left - VIEWPORT_MARGIN;
+        const spaceBottom = viewportHeight - buttonRect.bottom - VIEWPORT_MARGIN;
+        const spaceTop = buttonRect.top - VIEWPORT_MARGIN;
+
+        let placement = 'right';
+
+        if (spaceRight >= tooltipWidth + GAP) {
+            placement = 'right';
+        } else if (spaceLeft >= tooltipWidth + GAP) {
+            placement = 'left';
+        } else if (spaceBottom >= tooltipHeight + GAP) {
+            placement = 'bottom';
+        } else if (spaceTop >= tooltipHeight + GAP) {
+            placement = 'top';
+        } else {
+            const candidates = [
+                ['right', spaceRight],
+                ['left', spaceLeft],
+                ['bottom', spaceBottom],
+                ['top', spaceTop]
+            ];
+            candidates.sort(function (a, b) { return b[1] - a[1]; });
+            placement = candidates[0][0];
+        }
+
+        let left = VIEWPORT_MARGIN;
+        let top = VIEWPORT_MARGIN;
+        const buttonCenterX = buttonRect.left + (buttonRect.width / 2);
+        const buttonCenterY = buttonRect.top + (buttonRect.height / 2);
+
+        if (placement === 'right') {
+            left = buttonRect.right + GAP;
+            top = buttonCenterY - (tooltipHeight / 2);
+        } else if (placement === 'left') {
+            left = buttonRect.left - GAP - tooltipWidth;
+            top = buttonCenterY - (tooltipHeight / 2);
+        } else if (placement === 'bottom') {
+            left = buttonCenterX - (tooltipWidth / 2);
+            top = buttonRect.bottom + GAP;
+        } else {
+            left = buttonCenterX - (tooltipWidth / 2);
+            top = buttonRect.top - GAP - tooltipHeight;
+        }
+
+        const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - tooltipWidth - VIEWPORT_MARGIN);
+        const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - tooltipHeight - VIEWPORT_MARGIN);
+
+        left = clamp(left, VIEWPORT_MARGIN, maxLeft);
+        top = clamp(top, VIEWPORT_MARGIN, maxTop);
+
+        tooltip.style.left = Math.round(left) + 'px';
+        tooltip.style.top = Math.round(top) + 'px';
+        tooltip.dataset.placement = placement;
+
+        if (placement === 'right' || placement === 'left') {
+            const arrowY = clamp(buttonCenterY - top, 16, Math.max(16, tooltipHeight - 16));
+            tooltip.style.setProperty('--arrow-y', Math.round(arrowY) + 'px');
+        } else {
+            const arrowX = clamp(buttonCenterX - left, 16, Math.max(16, tooltipWidth - 16));
+            tooltip.style.setProperty('--arrow-x', Math.round(arrowX) + 'px');
+        }
+    }
+
+    function showTooltip(button) {
+        window.clearTimeout(hideTimer);
+
+        if (activeButton && activeButton !== button) {
+            activeButton.classList.remove('is-active');
+            activeButton.setAttribute('aria-expanded', 'false');
+        }
+
+        activeButton = button;
+        button.classList.add('is-active');
+        button.setAttribute('aria-expanded', 'true');
+
+        titleEl.textContent = getContextTitle(button);
+        bodyEl.textContent = button.dataset.info || 'Keine zusätzliche Erklärung vorhanden.';
+
+        tooltip.classList.add('is-visible');
+        tooltip.setAttribute('aria-hidden', 'false');
+
+        requestAnimationFrame(function () {
+            positionTooltip(button);
+        });
+    }
+
+    function hideTooltip(force) {
+        if (!force && pinnedButton) {
+            return;
+        }
+
+        if (activeButton) {
+            activeButton.classList.remove('is-active');
+            activeButton.setAttribute('aria-expanded', 'false');
+        }
+
+        activeButton = null;
+        tooltip.classList.remove('is-visible');
+        tooltip.setAttribute('aria-hidden', 'true');
+    }
+
+    function scheduleHide() {
+        window.clearTimeout(hideTimer);
+        hideTimer = window.setTimeout(function () {
+            hideTooltip(false);
+        }, 120);
+    }
+
+    document.querySelectorAll('.analytics-info-icon').forEach(function (button) {
+        button.addEventListener('mouseenter', function () {
+            showTooltip(button);
+        });
+
+        button.addEventListener('mouseleave', scheduleHide);
+
+        button.addEventListener('focus', function () {
+            showTooltip(button);
+        });
+
+        button.addEventListener('blur', function () {
+            if (pinnedButton !== button) {
+                scheduleHide();
+            }
+        });
+
+        button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (pinnedButton === button) {
+                pinnedButton = null;
+                hideTooltip(true);
+                return;
+            }
+
+            pinnedButton = button;
+            showTooltip(button);
+        });
+    });
+
+    tooltip.addEventListener('mouseenter', function () {
+        window.clearTimeout(hideTimer);
+    });
+
+    tooltip.addEventListener('mouseleave', function () {
+        if (!pinnedButton) {
+            scheduleHide();
         }
     });
 
-    if (!clickedInfoButton) {
-        return;
+    document.addEventListener('click', function (event) {
+        if (event.target.closest('.analytics-info-icon') || event.target.closest('.analytics-info-popover')) {
+            return;
+        }
+
+        pinnedButton = null;
+        hideTooltip(true);
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            pinnedButton = null;
+            hideTooltip(true);
+        }
+    });
+
+    window.addEventListener('resize', function () {
+        if (activeButton) {
+            positionTooltip(activeButton);
+        }
+    });
+
+    window.addEventListener('scroll', function () {
+        if (activeButton) {
+            positionTooltip(activeButton);
+        }
+    }, true);
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-
-    const wrap = clickedInfoButton.closest('.analytics-info-wrap');
-    if (wrap) {
-        wrap.classList.toggle('is-open');
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAnalyticsInfo, { once: true });
+    } else {
+        initAnalyticsInfo();
     }
-});
+})();
 </script>
 
 
@@ -830,7 +1225,7 @@ document.addEventListener('click', function (event) {
 
 
 <?php if ($qmEnabled && qm_ai_tables_enabled()): ?>
-<div class="row g-4 mb-4">
+<div class="row g-4 mb-4" id="ki-light-bewertungen">
     <div class="col-12">
         <div class="card h-100">
             <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center gap-2 flex-wrap">
@@ -887,6 +1282,7 @@ document.addEventListener('click', function (event) {
                             </td>
                             <td>
                                 <form method="post" action="claim_ai_analyze.php" class="m-0">
+                                    <?= csrf_field() ?>
                                     <input type="hidden" name="claim_id" value="<?= (int)$row['id'] ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-primary">
                                         KI-Light Analyse starten
@@ -897,23 +1293,31 @@ document.addEventListener('click', function (event) {
                                 <?php if (!empty($row['analysis_id']) && qm_feedback_enabled()): ?>
                                     <div class="d-flex flex-wrap gap-1">
                                         <form method="post" action="claim_ai_feedback.php" class="m-0">
+                                    <?= csrf_field() ?>
                                             <input type="hidden" name="claim_id" value="<?= (int)$row['id'] ?>">
                                             <input type="hidden" name="analysis_id" value="<?= (int)$row['analysis_id'] ?>">
+                                            <input type="hidden" name="return_to" value="auswertungen.php#ki-light-bewertungen">
                                             <button type="submit" name="feedback" value="analysis_correct" class="btn btn-sm btn-success">KI-Bewertung stimmt</button>
                                         </form>
                                         <form method="post" action="claim_ai_feedback.php" class="m-0">
+                                    <?= csrf_field() ?>
                                             <input type="hidden" name="claim_id" value="<?= (int)$row['id'] ?>">
                                             <input type="hidden" name="analysis_id" value="<?= (int)$row['analysis_id'] ?>">
+                                            <input type="hidden" name="return_to" value="auswertungen.php#ki-light-bewertungen">
                                             <button type="submit" name="feedback" value="analysis_wrong" class="btn btn-sm btn-outline-danger">KI-Bewertung falsch</button>
                                         </form>
                                         <form method="post" action="claim_ai_feedback.php" class="m-0">
+                                    <?= csrf_field() ?>
                                             <input type="hidden" name="claim_id" value="<?= (int)$row['id'] ?>">
                                             <input type="hidden" name="analysis_id" value="<?= (int)$row['analysis_id'] ?>">
+                                            <input type="hidden" name="return_to" value="auswertungen.php#ki-light-bewertungen">
                                             <button type="submit" name="feedback" value="repeat_confirmed" class="btn btn-sm btn-warning">Wiederholfehler bestätigen</button>
                                         </form>
                                         <form method="post" action="claim_ai_feedback.php" class="m-0">
+                                    <?= csrf_field() ?>
                                             <input type="hidden" name="claim_id" value="<?= (int)$row['id'] ?>">
                                             <input type="hidden" name="analysis_id" value="<?= (int)$row['analysis_id'] ?>">
+                                            <input type="hidden" name="return_to" value="auswertungen.php#ki-light-bewertungen">
                                             <button type="submit" name="feedback" value="measure_not_effective" class="btn btn-sm btn-danger">Maßnahme muss geprüft werden</button>
                                         </form>
                                     </div>
@@ -988,17 +1392,66 @@ document.addEventListener('click', function (event) {
 
     <div class="col-xl-5">
         <div class="card h-100">
-            <div class="card-header bg-white fw-bold">KI-Light Ampelübersicht</div>
-            <div class="card-body">
+            <div class="card-header bg-white fw-bold"><span class="analytics-title-with-info">KI-Light Ampelübersicht<?= analytics_info('Zeigt die Verteilung der aktuellen KI-Light Bewertungen nach Ampelstatus. So ist auf einen Blick erkennbar, wie viele Analysen unauffällig sind oder besondere Aufmerksamkeit benötigen.') ?></span></div>
+            <div class="card-body py-1">
                 <?php if ($qmAiWarningCounts): ?>
-                    <?php foreach ($qmAiWarningCounts as $row): ?>
-                        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
-                            <div><?= qm_ai_warning_badge($row['effectiveness_warning'] ?? null) ?></div>
-                            <div class="fw-bold"><?= (int)$row['count_value'] ?></div>
+                    <div class="accordion accordion-flush" id="kiLightAmpelAccordion">
+                    <?php foreach ($qmAiWarningCounts as $index => $row): ?>
+                        <?php
+                            $warningKey = (string)($row['effectiveness_warning'] ?? '');
+                            $warningDetails = $qmAiWarningDetailsByStatus[$warningKey] ?? [];
+                            $collapseId = 'kiLightAmpelDetail' . (int)$index;
+                        ?>
+                        <div class="analytics-drilldown-row">
+                            <button
+                                type="button"
+                                class="analytics-drilldown-toggle d-flex justify-content-between align-items-center gap-2"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#<?= e($collapseId) ?>"
+                                aria-expanded="false"
+                                aria-controls="<?= e($collapseId) ?>"
+                            >
+                                <span><?= qm_ai_warning_badge($warningKey !== '' ? $warningKey : null) ?></span>
+                                <span class="d-flex align-items-center ms-auto">
+                                    <strong><?= (int)$row['count_value'] ?></strong>
+                                    <span class="analytics-drilldown-chevron" aria-hidden="true">⌄</span>
+                                </span>
+                            </button>
+
+                            <div id="<?= e($collapseId) ?>" class="collapse" data-bs-parent="#kiLightAmpelAccordion">
+                                <div class="analytics-drilldown-panel">
+                                    <?php if ($warningDetails): ?>
+                                        <?php foreach ($warningDetails as $detail): ?>
+                                            <div class="analytics-drilldown-claim">
+                                                <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                                                    <div>
+                                                        <a href="claim_view.php?id=<?= (int)$detail['claim_id'] ?>" class="fw-bold text-decoration-none">
+                                                            <?= e((string)$detail['claim_number']) ?>
+                                                        </a>
+                                                        <div class="small text-muted">
+                                                            <?= e((string)$detail['claim_date']) ?> · <?= status_badge((string)$detail['status']) ?>
+                                                        </div>
+                                                    </div>
+                                                    <a href="claim_view.php?id=<?= (int)$detail['claim_id'] ?>" class="btn btn-sm btn-outline-primary">Öffnen</a>
+                                                </div>
+                                                <?php if (!empty($detail['short_description'])): ?>
+                                                    <div class="analytics-drilldown-description"><?= e((string)$detail['short_description']) ?></div>
+                                                <?php endif; ?>
+                                                <?php if (!empty($detail['detected_error_pattern'])): ?>
+                                                    <div class="small mt-1"><strong>Muster:</strong> <?= e((string)$detail['detected_error_pattern']) ?></div>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <div class="small text-muted py-2">Keine zugehörigen Reklamationen gefunden.</div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
                     <?php endforeach; ?>
+                    </div>
                 <?php else: ?>
-                    <div class="text-muted">Noch keine Auswertung vorhanden.</div>
+                    <div class="text-muted py-3">Noch keine Auswertung vorhanden.</div>
                 <?php endif; ?>
             </div>
         </div>
@@ -1054,17 +1507,67 @@ document.addEventListener('click', function (event) {
 
     <div class="col-xl-4">
         <div class="card h-100">
-            <div class="card-header bg-white fw-bold">Feedback-Übersicht</div>
-            <div class="card-body">
+            <div class="card-header bg-white fw-bold"><span class="analytics-title-with-info">Feedback-Übersicht<?= analytics_info('Zeigt zusammengefasst, wie das Qualitätsmanagement die bisherigen KI-Light Bewertungen beurteilt hat, zum Beispiel bestätigt, korrigiert oder als Wiederholfehler eingestuft.') ?></span></div>
+            <div class="card-body py-1">
                 <?php if ($qmFeedbackCounts): ?>
-                    <?php foreach ($qmFeedbackCounts as $row): ?>
-                        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
-                            <div><?= qm_feedback_badge((string)$row['feedback_value']) ?></div>
-                            <div class="fw-bold"><?= (int)$row['count_value'] ?></div>
+                    <div class="accordion accordion-flush" id="feedbackOverviewAccordion">
+                    <?php foreach ($qmFeedbackCounts as $index => $row): ?>
+                        <?php
+                            $feedbackKey = (string)$row['feedback_value'];
+                            $feedbackDetails = $qmFeedbackDetailsByValue[$feedbackKey] ?? [];
+                            $collapseId = 'feedbackOverviewDetail' . (int)$index;
+                        ?>
+                        <div class="analytics-drilldown-row">
+                            <button
+                                type="button"
+                                class="analytics-drilldown-toggle d-flex justify-content-between align-items-center gap-2"
+                                data-bs-toggle="collapse"
+                                data-bs-target="#<?= e($collapseId) ?>"
+                                aria-expanded="false"
+                                aria-controls="<?= e($collapseId) ?>"
+                            >
+                                <span><?= qm_feedback_badge($feedbackKey) ?></span>
+                                <span class="d-flex align-items-center ms-auto">
+                                    <strong><?= (int)$row['count_value'] ?></strong>
+                                    <span class="analytics-drilldown-chevron" aria-hidden="true">⌄</span>
+                                </span>
+                            </button>
+
+                            <div id="<?= e($collapseId) ?>" class="collapse" data-bs-parent="#feedbackOverviewAccordion">
+                                <div class="analytics-drilldown-panel">
+                                    <?php if ($feedbackDetails): ?>
+                                        <?php foreach ($feedbackDetails as $detail): ?>
+                                            <div class="analytics-drilldown-claim">
+                                                <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                                                    <div>
+                                                        <a href="claim_view.php?id=<?= (int)$detail['claim_id'] ?>" class="fw-bold text-decoration-none">
+                                                            <?= e((string)$detail['claim_number']) ?>
+                                                        </a>
+                                                        <div class="small text-muted">
+                                                            <?= e((string)$detail['claim_date']) ?> · <?= status_badge((string)$detail['status']) ?>
+                                                        </div>
+                                                    </div>
+                                                    <a href="claim_view.php?id=<?= (int)$detail['claim_id'] ?>" class="btn btn-sm btn-outline-primary">Öffnen</a>
+                                                </div>
+                                                <?php if (!empty($detail['short_description'])): ?>
+                                                    <div class="analytics-drilldown-description"><?= e((string)$detail['short_description']) ?></div>
+                                                <?php endif; ?>
+                                                <?php if (!empty($detail['note'])): ?>
+                                                    <div class="small mt-1"><strong>QM-Notiz:</strong> <?= e((string)$detail['note']) ?></div>
+                                                <?php endif; ?>
+                                                <div class="small text-muted mt-1">Feedback: <?= e((string)$detail['created_at']) ?></div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <div class="small text-muted py-2">Keine zugehörigen Reklamationen gefunden.</div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
                     <?php endforeach; ?>
+                    </div>
                 <?php else: ?>
-                    <div class="text-muted">Noch keine Feedback-Daten vorhanden.</div>
+                    <div class="text-muted py-3">Noch keine Feedback-Daten vorhanden.</div>
                 <?php endif; ?>
             </div>
         </div>
